@@ -18,10 +18,36 @@ class Calculator:
     operations: list[operation]
     variables: dict[str, str]                   # Dictionary of name for variable and the value to replace it with
     past_equations: list[tuple[str, str]]       # A list of two strings: input & output
-    special_conditions: dict[str, any]          # Not sure if this is neccesary but holds any special conditions that dont fit anywhere else in a dictionary by name and value
     round_to: int                               # -1 means no auto rounding
+    use_sigfigs: bool
+    more_info: dict[str, dict[str, str]]
 
     def __init__(self):
+        self.more_info = {
+            "commands": {
+                "var": "Adds or assigns to an existing variable with a number that can be used in equations.",
+                "help": "Prints a menu with all important information to get started using this calcualator.",
+                "clear": "Clears the console. Does not delete history of variables",
+                "round_to": "Sets the ammount to round answers to.",
+                "history": "Prints all past inputs and results",
+                "info": "Prints all data for this specific calculator object",
+                "sigfigs": "Enables/Disables whether to follow sigfigs."
+            },
+            "functions": {
+                "avg": "Get the average of all te values",
+                "sum": "Find the total of all values inside added up.",
+                "mean": "Find the mean of any number of values."
+            },
+            "operations": {
+                "+": "Addition",
+                "-": "Subtraction",
+                "*": "Multiplication. Do not need to include a '*' before parenthesis.",
+                "/": "Division",
+                "^": "Exponential; will take the left side and raise it to the power of the right.",
+                "%": "Modulo operation; will output the remainder of a division of the two values. (ex: 3 % 5 is 3 or 5 % 3 is 2)",
+                "|": "Absolute value; will always return the positive equivallent of the input. (ex: |-5| is 5 and |5| is 5)"
+            }
+        }
         self.past_equations = [ ]
         self.special_conditions = { }
         self.variables = { 
@@ -33,7 +59,10 @@ class Calculator:
             "var": (add_variable, True),
             "help": (help, False),
             "clear": (clear_console, False),
-            "round_to": (set_auto_round, True)
+            "round_to": (set_auto_round, True),
+            "history": (print_history, True),
+            "info": (print_info, True),
+            "sigfigs": (set_sigfigs, True)
         }
         self.functions = {
             "avg" : average,
@@ -49,48 +78,28 @@ class Calculator:
             operation("%", 2, two_around, lambda x, y: x % y),
             operation("|", 3, in_between, lambda x: abs(x))
         ]
-
-    @staticmethod
-    def static_solve(equation: str) -> str:
-        operator_index, operation = find_next_operator(Calculator(), equation)
-        # print(f"operator index @ solve: {operator_index} | equation = {equation}")
-        if (operation == None):
-            return equation
-
-        math_func: Callable[..., float] = operation.math_func
-        values_func = operation.gather_values_func
-        values, bounds = values_func(equation, operator_index)
-
-        result = str(math_func(*values))
-        # print(f"before end: ({bounds[0]}, {bounds[1]}) was {equation[bounds[0]:bounds[1]]} but now is {result} | whole start: {equation} turned to {stitch_in(equation, bounds[0], bounds[1], result)}")
-        return Calculator.static_solve(stitch_in(equation, bounds[0], bounds[1], result))
-
-    #region Object Specific Functions
+        self.round_to = -1
+        self.use_sigfigs = False
+        return
+    
     def solve(self, equation: str, clean: bool = False) -> str:
-        if clean:
-            equation = equation.replace(" ", "")
-            equation = replace_vars(self, equation)
+        if clean: equation = replace_vars(self, equation.replace(" ", ""))
 
         operator_index, operation = find_next_operator(self, equation)
-        # print(f"operator index @ solve: {operator_index} | equation = {equation}")
-        if (operation == None):
-            return equation
+        if operation is None: return equation                           #Just a number
 
-        math_func: Callable[..., float] = operation.math_func
+        math_func = operation.math_func
         values_func = operation.gather_values_func
-        values, bounds = values_func(equation, operator_index)
-        print("type: " + type(values)) 
-        if type(values) == "str":
-            result = str(math_func(self.solve(values)))
-        else:
-            result = str(math_func(*values))
-        # print(f"before end: ({bounds[0]}, {bounds[1]}) was {equation[bounds[0]:bounds[1]]} but now is {result} | whole start: {equation} turned to {stitch_in(equation, bounds[0], bounds[1], result)}")
+        values, bounds = values_func(equation, operator_index) 
+        
+        if type(values) == "str": result = str(math_func(self.solve(values)))
+        else: result = str(math_func(*values))
+        
         return self.solve(stitch_in(equation, bounds[0], bounds[1], result))
+    
     def solve_f(self, equation: str) -> float | None:
-        try:
-            return float(self.solve(equation))
-        except ValueError as e:
-            return None
+        try: return float(self.solve(equation))
+        except ValueError: return None
 
     def run(self, input: str) -> str:
         input = input.replace(" ", "")
@@ -98,32 +107,75 @@ class Calculator:
             return cmd_output
         
         input = replace_vars(self, input)
-        if (equations := is_inequality(self, input)) is not None:
-            # print(f"is inequality: {equations}")
-            return check_equality(self, *equations)
+        if (equations := is_inequality(self, input)) is not None: return check_equality(self, *equations)
 
-        return self.solve(input)
-    #endregion
+        result: str = self.solve(input)
+        self.update_vars(input, result)
+        return result
+    
+    def update_vars(self, input: str, solved: str) -> None:
+        self.past_equations.append(input)
+        self.variables["ans"] = solved
+        return
 
 #region COMMANDS
-def clear_console():
+def clear_console() -> str:
     os.system('cls')
     return ''
 
-def help():
+def help() -> str:
     return "This is the help function...not much here yet."
 
-def set_auto_round(self: Calculator, input: int):
+def set_auto_round(self: Calculator, input: int) -> str:
     self.round_to = input
     return f"Now will automatically round to {self.round_to} decimal places. You change it to round all digits by typing 'sigfigs: True'"
 
-def add_variable(self: Calculator, input: str):
+def add_variable(self: Calculator, input: str) -> str:
     var_name, var_value = input.split("=")
 
     if var_value is None: raise ValueError("Invalid syntax. Must have a '=' to assign a variable")
 
     self.variables[var_name] = self.solve(var_value, clean=True)
+    print(f"variables: '{self.variables}'")
     return f"Added variable, '{var_name}' with a value of '{self.variables[var_name]}'"
+
+def print_history(self: Calculator) -> str:
+    return f"This is the history of all inputs: {self.past_equations}"
+
+def print_info(self: Calculator) -> str:
+    output: str = "CALCULATOR INFO:\n"
+
+    output += "Variables:\n"
+    for var in self.variables:
+        output += f"   - {var}: {self.variables[var]}\n"
+
+    output += "Commands:\n"
+    for cmd in self.commands:
+        output += f"   - {cmd}: {self.more_info["commands"][cmd]}\n"
+
+    output += "Functions:\n"
+    for func in self.functions:
+        output += f"   - {func}: {self.more_info["functions"][func]}\n"
+    
+    output += "Operations:\n"
+    for operation in self.operations:
+        output += f"   - '{ operation.key }': {self.more_info["operations"][operation.key]}\n"
+
+    output += f"Rounds to {self.round_to} {"places" if self.use_sigfigs else "decimal places"}."
+
+    return output
+
+def set_sigfigs(self: Calculator, value: str) -> str:
+    if value.lower() == "true":
+        self.use_sigfigs = True
+        return "Enabled using significant figures for rounding."
+    elif value.lower() == "false":
+        self.use_sigfigs = False
+        return "Disabled using significant figures for rounding."
+    else:
+        return "Incorrect assignment | not either 'true' or 'false'"
+
+
 #endregion
 
 #region parsing equation
@@ -156,8 +208,6 @@ def in_between(equation: str, start_index: int) -> float:
         if equation[i] == equation[start_index]:
             return equation[start_index+1:i]
     raise ValueError("Does not have enclosing wrapper.")
-
-
 
 #endregion
 
@@ -221,14 +271,14 @@ def was_command(self: Calculator, input: str) -> str | None:
         parameters: list[str] = input[param_start + 1: ].split(",") # list of all values split by a comma within the brackets
         input = input[ :param_start] #Set input to be just the command
     else:
-        parameters = None
+        parameters = [ ]
 
     for cmd in self.commands:
         if input == cmd:
             func, requires_calc_reference = self.commands[cmd]
             if requires_calc_reference: parameters.insert(0, self)
     
-            if parameters is not None:
+            if len(parameters) != 0:
                 return func(*parameters)
             else:
                 return func()
