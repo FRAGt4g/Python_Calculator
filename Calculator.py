@@ -35,7 +35,7 @@ class Calculator:
                 "var": "Adds or assigns to an existing variable with a number that can be used in equations.",
                 "help": "Prints a menu with all important information to get started using this calcualator.",
                 "clear": "Clears the console. Does not delete history of variables",
-                "round_to": "Sets the ammount to round answers to.",
+                "round": "Sets the ammount to round answers to.",
                 "history": "Prints all past inputs and results",
                 "info": "Prints all data for this specific calculator object",
                 "sigfigs": "Enables/Disables whether to follow sigfigs."
@@ -75,7 +75,7 @@ class Calculator:
         self.functions = {
             "avg" : average,
             "sum" : sum,
-            "mean" : mean
+            "mean" : median
         }
         self.operations = [
             operation("+", 1, two_around, lambda x, y: x + y),
@@ -86,7 +86,10 @@ class Calculator:
             operation("%", 2, two_around, lambda x, y: x % y),
             operation("|", 99, in_between("|", "|"), lambda x: abs(float(x))),
             operation("(", 100, in_between("(", ")"), lambda x: x),
-            operation("!", 3, left_of, lambda x: factorial(x))
+            operation("!", 3, left_of, lambda x: factorial(x)),
+            operation("avg", 98, in_between("[", "]", 3), average),
+            operation("sum", 98, in_between("[", "]", 3), sum),
+            operation("median", 98, in_between("[", "]", 6), median),
         ]
         self.round_to = -1
         self.use_sigfigs = False
@@ -100,12 +103,25 @@ class Calculator:
 
         math_func = operation.math_func
         values_func = operation.gather_values_func
+        print(f"operator index: {operator_index} | eq: {equation}")
         values, bounds = values_func(equation, operator_index)
         
-        if type(values) is str: result = str(math_func(self.solve(values)))
+        print(f"values: {values} type is {type(values)} | {bounds}")
+
+        if type(values) is str: 
+            if len((val_arr := seperate_arguments(values))) != 0:
+                print(f"value: {val_arr}")
+                arguments = [float(self.solve(value)) for value in val_arr]
+                print("ARGUMENTS: " + str(arguments))
+                result = str(math_func(*arguments))
+            else:
+                result = str(math_func(self.solve(values)))
+
         elif type(values) is float or type(values) is int: result = str(math_func(values))
         else: result = str(math_func(*values))
         
+        print(f"result: {self.solve(stitch_in(equation, bounds[0], bounds[1], result))}")
+
         return self.solve(stitch_in(equation, bounds[0], bounds[1], result))
     
     def solve_f(self, equation: str) -> float | None:
@@ -176,18 +192,25 @@ def print_info(self: Calculator) -> str:
 
     output += "Commands:\n"
     for cmd in self.commands:
-        output += f"   - {cmd}: {self.more_info["commands"][cmd]}\n"
-
+        try: 
+            output += f"   - {cmd}: {self.more_info["commands"][cmd]}\n"
+        except KeyError:
+            output += f"   - '{ cmd }': No info provided.\n"
+    
     output += "Functions:\n"
     for func in self.functions:
-        output += f"   - {func}: {self.more_info["functions"][func]}\n"
-    
+        try:
+            output += f"   - {func}: {self.more_info["functions"][func]}\n"
+        except KeyError:
+            output += f"   - { func }: No info provided.\n"
+
     output += "Operations:\n"
     for operation in self.operations:
         try:
             output += f"   - '{ operation.key }': {self.more_info["operations"][operation.key]}\n"
         except KeyError:
             output += f"   - '{ operation.key }': No info provided.\n"
+    
     output += f"Rounds to {self.round_to} {"places" if self.use_sigfigs else "decimal places"}."
 
     return output
@@ -212,7 +235,10 @@ def num_leftof(equation: str, index: int) -> tuple[float, int]:
     i: int = index - 1
     while i >= 0 and is_number_char(equation[i]):
         i -= 1
-        if equation[i] == '-': break
+        if equation[i] == '-': 
+            i -= 1
+            break
+
     return (float(equation[i + 1:index]), i + 1)
 
 def num_rightof(equation: str, index: int) -> tuple[float, int]:
@@ -227,9 +253,10 @@ def two_around(equation: str, index: int) -> tuple[tuple[float, float], tuple[in
     right_value, end_index = num_rightof(equation, index)
     return ((left_value, right_value), (start_index, end_index))
 
-def in_between(start_str: str, end_str: str ="") -> Callable[[str, int], tuple[str, tuple[int, int]]]:
+def in_between(start_str: str, end_str: str ="", index_offset: int = 0) -> Callable[[str, int], tuple[str, tuple[int, int]]]:
     def internal(equation: str, start_index: int) -> tuple[str, tuple[int, int]]:
         nesting_count: int = 0
+        start_index += index_offset
         for i in range(start_index+1, len(equation)):
             if equation[i] == start_str and end_str != "": nesting_count += 1
             elif equation[i] == end_str:
@@ -237,13 +264,30 @@ def in_between(start_str: str, end_str: str ="") -> Callable[[str, int], tuple[s
                     nesting_count -= 1
                     continue
                 
-                return (equation[start_index+1:i], (start_index, i+1))
+                return (equation[start_index+1:i], (start_index - index_offset, i+1))
         raise ValueError("Does not have enclosing wrapper.")
     return internal
 
 def left_of(equation: str, index: int) -> tuple[float, tuple[int, int]]:
     value, left = num_leftof(equation, index)
     return value, (left, index + 1)
+
+def seperate_arguments(input: str) -> list[str]:
+    base_split = input.split(",")
+    for index, value in enumerate(base_split):
+        if "]" in value: 
+            backtrack_index: int = index
+            while backtrack_index >= 0:
+                if "[" in base_split[backtrack_index]:
+                    for _ in range(backtrack_index + 1, index + 1):
+                        base_split[backtrack_index] += "," + base_split[backtrack_index + 1]
+                        base_split.pop(backtrack_index + 1)
+                    break
+                backtrack_index -= 1
+    
+    return base_split
+        
+
 #endregion
 
 #region Math Functions
@@ -252,10 +296,11 @@ def average(*args: float) -> float:
 
 def sum(*args: float) -> float:
     sum: float = 0
+    print(f"args: {args} | type is {type(args)}")
     for num in args: sum += num
     return sum
 
-def mean(*args: float) -> float:
+def median(*args: float) -> float:
     index: int = int(len(args) / 2)
     return args[index]
 
@@ -271,13 +316,19 @@ def starts_with_var(self: Calculator, substr: str) -> str | None:
             return var
     return None
 
+def part_of_function(self: Calculator, input: str, index: int) -> bool:
+    while input[index].isalpha():
+        index += 1
+        if index == len(input): return False
+        if input[index] == "[": return True 
+    
+    return False
+
 def replace_vars(self: Calculator, input: str) -> str:
     i: int = 0
     while (i < len(input)):
-        if (variable := starts_with_var(self, input[i:])) is not None:
+        if (variable := starts_with_var(self, input[i:])) is not None and not part_of_function(self, input, i):
             input = input[0:i] + self.variables[variable] + input[i+len(variable):]
-        # elif input[i] == '-' and input[i-1] != '~':
-        #     input = input[0:i] + '~' + input[i+1:]
         i += 1
     return input
 
