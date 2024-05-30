@@ -4,9 +4,6 @@ import os
 class CommandFunction(Protocol):
     def __call__(self, *args: str) -> str:
         ...
-class MathFunction(Protocol):
-    def __call__(self, *args: float) -> str:
-        ...
 
 class operation:
     key: str
@@ -19,9 +16,14 @@ class operation:
         self.importance = importance
         self.gather_values_func = gather_values_func
         self.math_func = math_func
+    
+    @staticmethod
+    def MathFunction(key: str, function: Callable[..., float]):
+        return operation(key, 99, in_between("[", "]", len(key)), function)
+
+
 class Calculator:
     commands: dict[str, Tuple[CommandFunction, bool]]     # Probaly is static but is a keyword followed by the function to run with it
-    functions: dict[str, MathFunction]    # A list of all functions
     operations: list[operation]
     variables: dict[str, str]                   # Dictionary of name for variable and the value to replace it with
     past_equations: list[tuple[str, str]]       # A list of two strings: input & output
@@ -40,11 +42,6 @@ class Calculator:
                 "info": "Prints all data for this specific calculator object",
                 "sigfigs": "Enables/Disables whether to follow sigfigs."
             },
-            "functions": {
-                "avg": "Get the average of all te values",
-                "sum": "Find the total of all values inside added up.",
-                "mean": "Find the mean of any number of values."
-            },
             "operations": {
                 "+": "Addition",
                 "-": "Subtraction",
@@ -53,7 +50,11 @@ class Calculator:
                 "^": "Exponential; will take the left side and raise it to the power of the right.",
                 "%": "Modulo operation; will output the remainder of a division of the two values. (ex: 3 % 5 is 3 or 5 % 3 is 2)",
                 "|": "Absolute value; will always return the positive equivallent of the input. (ex: |-5| is 5 and |5| is 5)",
-                "!": "Factorial; returns all integers beneath it until 1 multiplied together. (ex: 4! = 4*3*2*1 and 1! = 1)"
+                "!": "Factorial; returns all integers beneath it until 1 multiplied together. (ex: 4! = 4*3*2*1 and 1! = 1)",
+                "?": "Summorial; returns all integers beneath it until 1 added together. (ex: 4? = 4+3+2+1 and 1! = 1)",
+                "avg": "Returns the average of all the values put in. (ex: avg(1, 2, 3, 4, 5) = 3)",
+                "median": "Returns the median of the values put in. (ex: median(1, 2, 10-3, 4, 5) = 7)",
+                "sum": "Returns the sum of all the values put in. (ex: sum(1, 2, 3, 4, 5) = 15)",
             }
         }
         self.past_equations = [ ]
@@ -65,17 +66,13 @@ class Calculator:
         }
         self.commands = {
             "var": (add_variable, True),
+            "function": (init_new_function, True),
             "help": (help, False),
             "clear": (clear_console, False),
             "round": (set_auto_round, True),
             "history": (print_history, True),
             "info": (print_info, True),
             "sigfigs": (set_sigfigs, True)
-        }
-        self.functions = {
-            "avg" : average,
-            "sum" : sum,
-            "mean" : median
         }
         self.operations = [
             operation("+", 1, two_around, lambda x, y: x + y),
@@ -85,11 +82,12 @@ class Calculator:
             operation("^", 2, two_around, lambda x, y: x ** y),
             operation("%", 2, two_around, lambda x, y: x % y),
             operation("|", 99, in_between("|", "|"), lambda x: abs(float(x))),
-            operation("(", 100, in_between("(", ")"), lambda x: x),
             operation("!", 3, left_of, lambda x: factorial(x)),
-            operation("avg", 98, in_between("[", "]", 3), average),
-            operation("sum", 98, in_between("[", "]", 3), sum),
-            operation("median", 98, in_between("[", "]", 6), median),
+            operation("!", 3, left_of, lambda x: summorial(x)),
+            operation.MathFunction("median", median),
+            operation.MathFunction("avg", average),
+            operation.MathFunction("sum", sum),
+            operation("(", 100, in_between("(", ")"), lambda x: x),
         ]
         self.round_to = -1
         self.use_sigfigs = False
@@ -108,11 +106,11 @@ class Calculator:
         
         print(f"values: {values} type is {type(values)} | {bounds}")
 
-        if type(values) is str: 
+        if type(values) is str:
             if len((val_arr := seperate_arguments(values))) != 0:
                 print(f"value: {val_arr}")
                 arguments = [float(self.solve(value)) for value in val_arr]
-                print("ARGUMENTS: " + str(arguments))
+                print(f"ARGUMENTS for {operation.key}: " + str(arguments))
                 result = str(math_func(*arguments))
             else:
                 result = str(math_func(self.solve(values)))
@@ -128,18 +126,33 @@ class Calculator:
         try: return float(self.solve(equation))
         except ValueError: return None
 
-    def run(self, input: str) -> str:
+    def run(self, input: str, safe: bool = True) -> str:
         input = input.replace(" ", "")
-        if (cmd_output := was_command(self, input)) is not None:
-            return cmd_output
-        
-        input = replace_vars(self, input)
-        if (equations := is_inequality(self, input)) is not None: return check_equality(self, *equations)
 
-        result: str = self.solve(input)
-        self.update_vars(input, result)
-        return self.round(result)
-    
+        if safe:
+            try:
+                if (cmd_output := was_command(self, input)) is not None:
+                    return cmd_output
+                
+                input = replace_vars(self, input)
+                if (equations := is_inequality(self, input)) is not None: return check_equality(self, *equations)
+
+                result: str = self.solve(input)
+                self.update_vars(input, result)
+                return self.round(result)
+            except Exception as e:
+                return "Invalid input." 
+        else:
+            if (cmd_output := was_command(self, input)) is not None:
+                return cmd_output
+            
+            input = replace_vars(self, input)
+            if (equations := is_inequality(self, input)) is not None: return check_equality(self, *equations)
+
+            result: str = self.solve(input)
+            self.update_vars(input, result)
+            return self.round(result)
+
     def update_vars(self, input: str, solved: str) -> None:
         self.past_equations.append((input, solved))
         self.variables["ans"] = solved
@@ -180,6 +193,31 @@ def add_variable(self: Calculator, input: str) -> str:
     print(f"variables: '{self.variables}'")
     return f"Added variable, '{var_name}' with a value of '{self.variables[var_name]}'"
 
+def init_new_function(self: Calculator, input: str) -> str:
+    func_name, func_body = input.split("=")
+    variables = func_name[func_name.find("[")+1:func_name.find("]")].split(",")
+    func_name = func_name[:func_name.find("[")]
+    if func_body is None: raise ValueError("Invalid syntax. Must have a '=' to assign a function")
+    if func_name in self.more_info["operations"]: raise ValueError(f"Function '{func_name}' already exists")
+    self.more_info["operations"][func_name] = func_body
+
+    def new_function(function_body: str, *args: list[float]) -> str:
+        print("calling!")
+        for index, arg in enumerate(args):
+            try: 
+                variable = variables[index]
+            except IndexError:
+                raise ValueError(f"Too many arguments for function '{func_name}'")
+            print("calling new function!", arg, function_body, variable)
+            function_body = function_body.replace(variable, str(arg))
+        
+        print(f"final result: {function_body}")
+        return function_body
+    
+    self.operations.append(operation.MathFunction(func_name, lambda *args: new_function(func_body, *args)))
+
+    return f"Added function, '{func_name}' with a body of '{func_body}'"
+
 def print_history(self: Calculator) -> str:
     return f"This is the history of all inputs: {self.past_equations}"
 
@@ -196,13 +234,6 @@ def print_info(self: Calculator) -> str:
             output += f"   - {cmd}: {self.more_info["commands"][cmd]}\n"
         except KeyError:
             output += f"   - '{ cmd }': No info provided.\n"
-    
-    output += "Functions:\n"
-    for func in self.functions:
-        try:
-            output += f"   - {func}: {self.more_info["functions"][func]}\n"
-        except KeyError:
-            output += f"   - { func }: No info provided.\n"
 
     output += "Operations:\n"
     for operation in self.operations:
@@ -307,6 +338,10 @@ def median(*args: float) -> float:
 def factorial(number: float) -> float:
     if number == 1: return 1
     return number * factorial(number - 1)
+
+def summorial(number: float) -> float:
+    if number == 1: return 1
+    return number + summorial(number - 1)
 #endregion
 
 #region HELPERS
@@ -355,9 +390,9 @@ def stitch_in(str: str, start: int, end: int, stitch_in: str) -> str:
 #endregion
 
 def was_command(self: Calculator, input: str) -> str | None:
-    parameters: list[str] = [ ]
+    passed_value: str = str()
     if (param_start := input.find(":")) != -1:
-        parameters = input[param_start + 1: ].split(",") # list of all values split by a comma within the brackets
+        passed_value = input[param_start + 1: ]
         input = input[ :param_start] #Set input to be just the command
 
     for cmd in self.commands:
@@ -365,9 +400,10 @@ def was_command(self: Calculator, input: str) -> str | None:
             func, requires_calc_reference = self.commands[cmd]
     
             if requires_calc_reference:
-                return func(self, *parameters)
+                print("paramets", passed_value)
+                return func(self) if passed_value == "" else func(self, passed_value)
             else: 
-                return func(*parameters)
+                return func() if passed_value == "" else func(passed_value)
         
     return None
 
