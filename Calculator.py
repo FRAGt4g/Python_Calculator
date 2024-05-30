@@ -1,10 +1,17 @@
-from typing import Callable
+from typing import Callable, Dict, TypeVar, Tuple, Protocol
 import os
+
+class CommandFunction(Protocol):
+    def __call__(self, *args: str) -> str:
+        ...
+class MathFunction(Protocol):
+    def __call__(self, *args: float) -> str:
+        ...
 
 class operation:
     key: str
     importance: int
-    gather_values_func: Callable[..., tuple[tuple[float, float] | str, tuple[float, float]]]
+    gather_values_func: Callable[..., tuple[tuple[float, float] | str, tuple[int, int]]]
     math_func: Callable[..., float]
 
     def __init__(self, key, importance, gather_values_func, math_func):
@@ -13,8 +20,8 @@ class operation:
         self.gather_values_func = gather_values_func
         self.math_func = math_func
 class Calculator:
-    commands: dict[str, Callable[..., str]]     # Probaly is static but is a keyword followed by the function to run with it
-    functions: dict[str, Callable[..., str]]    # A list of all functions
+    commands: dict[str, Tuple[CommandFunction, bool]]     # Probaly is static but is a keyword followed by the function to run with it
+    functions: dict[str, MathFunction]    # A list of all functions
     operations: list[operation]
     variables: dict[str, str]                   # Dictionary of name for variable and the value to replace it with
     past_equations: list[tuple[str, str]]       # A list of two strings: input & output
@@ -45,7 +52,8 @@ class Calculator:
                 "/": "Division",
                 "^": "Exponential; will take the left side and raise it to the power of the right.",
                 "%": "Modulo operation; will output the remainder of a division of the two values. (ex: 3 % 5 is 3 or 5 % 3 is 2)",
-                "|": "Absolute value; will always return the positive equivallent of the input. (ex: |-5| is 5 and |5| is 5)"
+                "|": "Absolute value; will always return the positive equivallent of the input. (ex: |-5| is 5 and |5| is 5)",
+                "!": "Factorial; returns all integers beneath it until 1 multiplied together. (ex: 4! = 4*3*2*1 and 1! = 1)"
             }
         }
         self.past_equations = [ ]
@@ -53,13 +61,13 @@ class Calculator:
         self.variables = { 
             "ans" : "0",
             "pi" : "3.1415926",
-            "e" : "1.618"
+            "e" : "2.718281828"
         }
         self.commands = {
             "var": (add_variable, True),
             "help": (help, False),
             "clear": (clear_console, False),
-            "round_to": (set_auto_round, True),
+            "round": (set_auto_round, True),
             "history": (print_history, True),
             "info": (print_info, True),
             "sigfigs": (set_sigfigs, True)
@@ -76,7 +84,9 @@ class Calculator:
             operation("/", 2, two_around, lambda x, y: x / y),
             operation("^", 2, two_around, lambda x, y: x ** y),
             operation("%", 2, two_around, lambda x, y: x % y),
-            operation("|", 3, in_between, lambda x: abs(x))
+            operation("|", 99, in_between("|", "|"), lambda x: abs(float(x))),
+            operation("(", 100, in_between("(", ")"), lambda x: x),
+            operation("!", 3, left_of, lambda x: factorial(x))
         ]
         self.round_to = -1
         self.use_sigfigs = False
@@ -86,13 +96,14 @@ class Calculator:
         if clean: equation = replace_vars(self, equation.replace(" ", ""))
 
         operator_index, operation = find_next_operator(self, equation)
-        if operation is None: return equation                           #Just a number
+        if operation is None: return equation
 
         math_func = operation.math_func
         values_func = operation.gather_values_func
-        values, bounds = values_func(equation, operator_index) 
+        values, bounds = values_func(equation, operator_index)
         
-        if type(values) == "str": result = str(math_func(self.solve(values)))
+        if type(values) is str: result = str(math_func(self.solve(values)))
+        elif type(values) is float or type(values) is int: result = str(math_func(values))
         else: result = str(math_func(*values))
         
         return self.solve(stitch_in(equation, bounds[0], bounds[1], result))
@@ -111,12 +122,23 @@ class Calculator:
 
         result: str = self.solve(input)
         self.update_vars(input, result)
-        return result
+        return self.round(result)
     
     def update_vars(self, input: str, solved: str) -> None:
-        self.past_equations.append(input)
+        self.past_equations.append((input, solved))
         self.variables["ans"] = solved
         return
+
+    def round(self, input: str) -> str:
+        if self.round_to == -1: 
+            return input
+
+        try: 
+            number = float(input)
+        except ValueError: 
+            return input
+        
+        return  f"{number:.{self.round_to}{"g" if self.use_sigfigs else "f"}}"
 
 #region COMMANDS
 def clear_console() -> str:
@@ -126,8 +148,11 @@ def clear_console() -> str:
 def help() -> str:
     return "This is the help function...not much here yet."
 
-def set_auto_round(self: Calculator, input: int) -> str:
-    self.round_to = input
+def set_auto_round(self: Calculator, input: str) -> str:
+    if (input.lower() == "false" or input.lower() == "off"):
+        self.round_to = -1
+    else: 
+        self.round_to = max(int(input), -1)
     return f"Now will automatically round to {self.round_to} decimal places. You change it to round all digits by typing 'sigfigs: True'"
 
 def add_variable(self: Calculator, input: str) -> str:
@@ -159,8 +184,10 @@ def print_info(self: Calculator) -> str:
     
     output += "Operations:\n"
     for operation in self.operations:
-        output += f"   - '{ operation.key }': {self.more_info["operations"][operation.key]}\n"
-
+        try:
+            output += f"   - '{ operation.key }': {self.more_info["operations"][operation.key]}\n"
+        except KeyError:
+            output += f"   - '{ operation.key }': No info provided.\n"
     output += f"Rounds to {self.round_to} {"places" if self.use_sigfigs else "decimal places"}."
 
     return output
@@ -175,20 +202,17 @@ def set_sigfigs(self: Calculator, value: str) -> str:
     else:
         return "Incorrect assignment | not either 'true' or 'false'"
 
-
 #endregion
 
 #region parsing equation
 def is_number_char(input: str) -> bool:
     return input.isdigit() or input == "." or input == '-'
 
-def num_leftof(equation: str, index: int) -> float:
-    i = index - 1
+def num_leftof(equation: str, index: int) -> tuple[float, int]:
+    i: int = index - 1
     while i >= 0 and is_number_char(equation[i]):
-        if equation[i] == '-':
-            i -= 1
-            break
         i -= 1
+        if equation[i] == '-': break
     return (float(equation[i + 1:index]), i + 1)
 
 def num_rightof(equation: str, index: int) -> tuple[float, int]:
@@ -203,26 +227,41 @@ def two_around(equation: str, index: int) -> tuple[tuple[float, float], tuple[in
     right_value, end_index = num_rightof(equation, index)
     return ((left_value, right_value), (start_index, end_index))
 
-def in_between(equation: str, start_index: int) -> float:
-    for i in range(start_index+1, len(equation)):
-        if equation[i] == equation[start_index]:
-            return equation[start_index+1:i]
-    raise ValueError("Does not have enclosing wrapper.")
+def in_between(start_str: str, end_str: str ="") -> Callable[[str, int], tuple[str, tuple[int, int]]]:
+    def internal(equation: str, start_index: int) -> tuple[str, tuple[int, int]]:
+        nesting_count: int = 0
+        for i in range(start_index+1, len(equation)):
+            if equation[i] == start_str and end_str != "": nesting_count += 1
+            elif equation[i] == end_str:
+                if end_str != "" and nesting_count > 0: 
+                    nesting_count -= 1
+                    continue
+                
+                return (equation[start_index+1:i], (start_index, i+1))
+        raise ValueError("Does not have enclosing wrapper.")
+    return internal
 
+def left_of(equation: str, index: int) -> tuple[float, tuple[int, int]]:
+    value, left = num_leftof(equation, index)
+    return value, (left, index + 1)
 #endregion
 
 #region Math Functions
-def average(*args: float):
-    return sum(args)/len(args)
+def average(*args: float) -> float:
+    return sum(*args)/len(args)
 
-def sum(*args: float):
+def sum(*args: float) -> float:
     sum: float = 0
     for num in args: sum += num
     return sum
 
-def mean(*args: float):
-    index: int = len(args) / 2
+def mean(*args: float) -> float:
+    index: int = int(len(args) / 2)
     return args[index]
+
+def factorial(number: float) -> float:
+    if number == 1: return 1
+    return number * factorial(number - 1)
 #endregion
 
 #region HELPERS
@@ -242,14 +281,12 @@ def replace_vars(self: Calculator, input: str) -> str:
         i += 1
     return input
 
-def find_next_operator(self: Calculator, equation: str) -> tuple[int, operation]:
-    print(f"NEW NEW NEW Input: '{equation}'")
-    current_operation = (-1, None)
+def find_next_operator(self: Calculator, equation: str) -> tuple[int, operation | None]:
+    current_operation: tuple[int, operation | None] = (-1, None)
     start_index = 0 if equation[0] != '-' else 1
     for i in range(start_index, len(equation)):
-        print(f"i: {i} | len: {len(equation)}")
         for operator in self.operations:
-            if i+len(operator.key) < len(equation) and equation[i:i+len(operator.key)] == operator.key:
+            if i+len(operator.key) <= len(equation) and equation[i:i+len(operator.key)] == operator.key:
                 if (current_operation[1] is None or operator.importance > current_operation[1].importance):
                     current_operation = (i, operator)
                 break
@@ -267,21 +304,19 @@ def stitch_in(str: str, start: int, end: int, stitch_in: str) -> str:
 #endregion
 
 def was_command(self: Calculator, input: str) -> str | None:
+    parameters: list[str] = [ ]
     if (param_start := input.find(":")) != -1:
-        parameters: list[str] = input[param_start + 1: ].split(",") # list of all values split by a comma within the brackets
+        parameters = input[param_start + 1: ].split(",") # list of all values split by a comma within the brackets
         input = input[ :param_start] #Set input to be just the command
-    else:
-        parameters = [ ]
 
     for cmd in self.commands:
         if input == cmd:
             func, requires_calc_reference = self.commands[cmd]
-            if requires_calc_reference: parameters.insert(0, self)
     
-            if len(parameters) != 0:
+            if requires_calc_reference:
+                return func(self, *parameters)
+            else: 
                 return func(*parameters)
-            else:
-                return func()
         
     return None
 
@@ -307,31 +342,35 @@ def is_inequality(self: Calculator, input: str) -> tuple[str, str, str] | None:
     return None
 
 def check_equality(self: Calculator, left_equation: str, right_equation: str, equality_check: str) -> str:
+    left_solution = self.solve_f(left_equation)
+    right_solution = self.solve_f(right_equation)
+    if left_solution is None or right_solution is None: return "Invalid"
+
     match equality_check:
         case "equal":
-            if (left_solve := self.solve_f(left_equation)) == (right_solve := self.solve_f(right_equation)):
-                return f"Correct. Results: (left: {left_solve}, right: {right_solve})"
+            if left_solution == right_solution:
+                return f"Correct. Results: (left: {left_solution}, right: {right_solution})"
             else:
-                return f"Incorrect. Results: (left: {left_solve}, right: {right_solve})"
-        case "greater":
-            if (left_solve := self.solve_f(left_equation)) > (right_solve := self.solve_f(right_equation)):
-                return f"Correct. Results: (left: {left_solve}, right: {right_solve})"
+                return f"Incorrect. Results: (left: {left_solution}, right: {right_solution})"
+        case "greater":            
+            if left_solution > right_solution:
+                return f"Correct. Results: (left: {left_solution}, right: {right_solution})"
             else:
-                return f"Incorrect. Results: (left: {left_solve}, right: {right_solve})"
+                return f"Incorrect. Results: (left: {left_solution}, right: {right_solution})"
         case "less":
-            if (left_solve := self.solve_f(left_equation)) < (right_solve := self.solve_f(right_equation)):
-                return f"Correct. Results: (left: {left_solve}, right: {right_solve})"
+            if left_solution < right_solution:
+                return f"Correct. Results: (left: {left_solution}, right: {right_solution})"
             else:
-                return f"Incorrect. Results: (left: {left_solve}, right: {right_solve})"
+                return f"Incorrect. Results: (left: {left_solution}, right: {right_solution})"
         case "greater or equal":
-            if (left_solve := self.solve_f(left_equation)) >= (right_solve := self.solve_f(right_equation)):
-                return f"Correct. Results: (left: {left_solve}, right: {right_solve})"
+            if left_solution >= right_solution:
+                return f"Correct. Results: (left: {left_solution}, right: {right_solution})"
             else:
-                return f"Incorrect. Results: (left: {left_solve}, right: {right_solve})"
+                return f"Incorrect. Results: (left: {left_solution}, right: {right_solution})"
         case "less or equal":
-            if (left_solve := self.solve_f(left_equation)) <= (right_solve := self.solve_f(right_equation)):
-                return f"Correct. Results: (left: {left_solve}, right: {right_solve})"
+            if left_solution <= right_solution:
+                return f"Correct. Results: (left: {left_solution}, right: {right_solution})"
             else:
-                return f"Incorrect. Results: (left: {left_solve}, right: {right_solve})"
+                return f"Incorrect. Results: (left: {left_solution}, right: {right_solution})"
         case _:
             raise ValueError("Invalid equality check value. Please have it be greater, less, equal or some combination.")
